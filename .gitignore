@@ -1,0 +1,23 @@
+# Goreleaser
+dist/
+.github/release-notes.md
+
+# Build
+provider-virtuozzo
+*.out
+
+# Docs
+.cache/
+.public/
+node_modules/
+
+# work
+.kind/
+.work/
+.vscode/
+
+# Crossplane package
+/package/*.xpkg
+
+# kuttl
+kubeconfig

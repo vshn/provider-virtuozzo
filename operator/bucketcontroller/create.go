@@ -1,0 +1,71 @@
+package bucketcontroller
+
+import (
+	"context"
+
+	pipeline "github.com/ccremer/go-command-pipeline"
+	"github.com/crossplane/crossplane-runtime/pkg/errors"
+	"github.com/crossplane/crossplane-runtime/pkg/event"
+	"github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
+	"github.com/crossplane/crossplane-runtime/pkg/resource"
+	"github.com/minio/minio-go/v7"
+	"github.com/vshn/provider-virtuozzo/operator/pipelineutil"
+	controllerruntime "sigs.k8s.io/controller-runtime"
+)
+
+// Create implements managed.ExternalClient.
+func (p *ProvisioningPipeline) Create(ctx context.Context, mg resource.Managed) (managed.ExternalCreation, error) {
+	log := controllerruntime.LoggerFrom(ctx)
+	log.Info("Creating resource")
+
+	bucket := fromManaged(mg)
+	pctx := &pipelineContext{Context: ctx, bucket: bucket}
+	pipe := pipeline.NewPipeline[*pipelineContext]()
+	pipe.WithBeforeHooks(pipelineutil.DebugLogger(pctx)).
+		WithSteps(
+			pipe.NewStep("create bucket", p.createS3Bucket),
+			pipe.NewStep("set lock", p.setLock),
+			pipe.NewStep("emit event", p.emitCreationEvent),
+		)
+	err := pipe.RunWithContext(pctx)
+
+	return managed.ExternalCreation{ConnectionDetails: p.connectionDetails()}, errors.Wrap(err, "cannot provision bucket")
+}
+
+// createS3Bucket creates a new bucket and sets the name in the status.
+func (p *ProvisioningPipeline) createS3Bucket(ctx *pipelineContext) error {
+	s3Client := p.minio
+	bucket := ctx.bucket
+
+	bucketName := bucket.GetBucketName()
+	err := s3Client.MakeBucket(ctx, bucketName, minio.MakeBucketOptions{})
+
+	if err != nil {
+		// Check to see if we already own this bucket (which happens if we run this twice)
+		exists, errBucketExists := s3Client.BucketExists(ctx, bucketName)
+		if errBucketExists == nil && exists {
+			return nil
+		} else {
+			return err
+		}
+	}
+	return nil
+}
+
+// setLock sets an annotation that tells the Observe func that we have successfully created the bucket.
+func (p *ProvisioningPipeline) setLock(ctx *pipelineContext) error {
+	if ctx.bucket.Annotations == nil {
+		ctx.bucket.Annotations = map[string]string{}
+	}
+	ctx.bucket.Annotations[lockAnnotation] = "claimed"
+	return nil
+}
+
+func (p *ProvisioningPipeline) emitCreationEvent(ctx *pipelineContext) error {
+	p.recorder.Event(ctx.bucket, event.Event{
+		Type:    event.TypeNormal,
+		Reason:  "Created",
+		Message: "Bucket successfully created",
+	})
+	return nil
+}

@@ -1,0 +1,20 @@
+apiVersion: virtuozzo.crossplane.io/v1
+kind: ProviderConfig
+metadata:
+  name: default
+spec:
+  credentials:
+    source: Secret
+    credentialsSecretRef:
+      name: virtuozzo-s3-credentials
+      namespace: crossplane-system
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: virtuozzo-s3-credentials
+  namespace: crossplane-system
+stringData:
+  AWS_ACCESS_KEY_ID: "<key>"
+  AWS_SECRET_ACCESS_KEY: "<secret>"
+  S3_ENDPOINT_URL: "https://s3.example.com"
